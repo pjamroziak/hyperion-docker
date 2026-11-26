@@ -1,0 +1,34 @@
+services:
+  hyperion:
+    image: ghcr.io/pjamroziak/hyperion-docker:2.2.1
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      TZ: Europe/Warsaw
+    ports:
+      - "8090:8090/tcp"
+    volumes:
+      - type: bind
+        source: ${HYPERION_CONFIG_DIR:-/mnt/tank/apps/hyperion}
+        target: /config
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--output", "/dev/null", "--max-time", "3", "http://127.0.0.1:8090/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+x-portals:
+  - name: Web UI
+    scheme: http
+    host: "0.0.0.0"
+    port: 8090
+    path: /

@@ -8,6 +8,10 @@ validate_id() {
             exit 64
             ;;
     esac
+    if [ "${#2}" -gt 10 ] || [ "$2" -gt 4294967294 ]; then
+        printf '%s must be between 1 and 4294967294.\n' "$1" >&2
+        exit 64
+    fi
 }
 
 validate_id PUID "$PUID"

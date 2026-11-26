@@ -14,7 +14,8 @@ RUN set -eu; \
     esac; \
     apt-get update -o APT::Update::Error-Mode=any; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates curl libgl1 libglib2.0-0 tzdata util-linux; \
+        ca-certificates curl libdbus-1-3 libegl1 libfontconfig1 libgl1 \
+        libglib2.0-0 libxkbcommon0 tzdata util-linux; \
     curl --fail --silent --show-error --location --retry 3 \
         "https://github.com/hyperion-project/hyperion.ng/releases/download/2.2.1/Hyperion-2.2.1-Linux-${TARGETARCH}.deb" \
         --output /tmp/hyperion.deb; \
@@ -23,7 +24,10 @@ RUN set -eu; \
         apt-get install -y --no-install-recommends /tmp/hyperion.deb; \
     rm /tmp/hyperion.deb; \
     rm -rf /var/lib/apt/lists/*; \
-    hyperiond --service --version
+    if ! hyperiond --service --version; then \
+        ldd "$(readlink -f "$(command -v hyperiond)")" >&2; \
+        exit 1; \
+    fi
 
 ENV PUID=568 PGID=568 HOME=/config
 RUN install -d -m 0750 -o "$PUID" -g "$PGID" /config

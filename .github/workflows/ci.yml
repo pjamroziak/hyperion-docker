@@ -22,7 +22,7 @@ jobs:
     env:
       COMPOSE_FILE: truenas-compose.yaml
       COMPOSE_PROJECT_NAME: hyperion-smoke
-      HYPERION_CONFIG_DIR: ${{ runner.temp }}/hyperion-config
+      HYPERION_CONFIG_DIR: /tmp/hyperion-config
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -2,30 +2,23 @@
 set -euo pipefail
 
 target=$1
-archive_dir=$2
+archive=$2
 run_id=$3
 repository=${target%:*}
 
-# Load and validate both artifacts before pushing either platform.
-for arch in amd64 arm64; do
-    source="hyperion-release:$arch"
-    docker image load --input "$archive_dir/hyperion-$arch.tar.gz"
-    platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$source")
-    if [[ "$platform" != "linux/$arch" ]]; then
-        printf 'Expected linux/%s in %s, found %s.\n' "$arch" "$source" "$platform" >&2
-        exit 1
-    fi
-done
+source=hyperion-release:amd64
+docker image load --input "$archive"
+platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$source")
+if [[ "$platform" != linux/amd64 ]]; then
+    printf 'Expected a linux/amd64 image, found %s.\n' "$platform" >&2
+    exit 1
+fi
 
-sources=()
-for arch in amd64 arm64; do
-    staging="$repository:build-$run_id-$arch"
-    docker image tag "hyperion-release:$arch" "$staging"
-    docker image push --platform "linux/$arch" "$staging"
-    sources+=("$staging")
-done
+# The staging push also creates the package on its first release.
+staging="$repository:build-$run_id"
+docker image tag "$source" "$staging"
+docker image push --platform linux/amd64 "$staging"
 
-# The staging pushes also create the package on its first release.
 if inspection=$(docker buildx imagetools inspect "$target" 2>&1); then
     printf 'Release tag %s already exists. Use a new revision.\n' "$target" >&2
     exit 1
@@ -35,7 +28,6 @@ if [[ "$inspection" != "ERROR: $target: not found" ]]; then
     exit 1
 fi
 
-docker buildx imagetools create --tag "$target" "${sources[@]}"
-docker buildx imagetools inspect "$target" --raw |
-    jq -e '[.manifests[].platform | "\(.os)/\(.architecture)"] | sort == ["linux/amd64", "linux/arm64"]' >/dev/null
+docker buildx imagetools create --prefer-index=false --tag "$target" "$staging"
+test "$(docker buildx imagetools inspect "$target" --raw)" = "$(docker buildx imagetools inspect "$staging" --raw)"
 docker buildx imagetools inspect "$target"

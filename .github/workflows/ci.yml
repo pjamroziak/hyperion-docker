@@ -3,6 +3,8 @@ name: Build and release Hyperion
 on:
   pull_request:
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*-r*'
 
@@ -11,17 +13,9 @@ permissions:
 
 jobs:
   smoke:
-    name: Smoke test (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+    name: Smoke test (amd64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     env:
       COMPOSE_FILE: truenas-compose.yaml
       COMPOSE_PROJECT_NAME: hyperion-smoke
@@ -34,7 +28,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Validate the release tag
-        if: github.event_name == 'push'
+        if: github.ref_type == 'tag'
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-r[1-9][0-9]*$ ]]; then
@@ -50,12 +44,31 @@ jobs:
             echo "The Compose image must match the release tag: $expected" >&2
             exit 1
           fi
-      - name: Validate Compose and build the image
-        shell: bash
+      - name: Validate Compose and read the image name
+        id: compose
         run: |
           docker compose config --quiet
           image="$(docker compose config --images)"
-          docker build --tag "$image" .
+          printf 'image=%s\n' "$image" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the AMD64 image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: ${{ steps.compose.outputs.image }}
+          pull: true
+          load: true
+          cache-from: type=gha,scope=hyperion-amd64
+          cache-to: type=gha,scope=hyperion-amd64,mode=max,ignore-error=true
+          no-cache-filters: ${{ github.ref_type == 'tag' && 'runtime' || '' }}
+      - name: Check the image version and platform
+        shell: bash
+        env:
+          IMAGE: ${{ steps.compose.outputs.image }}
+        run: |
+          image="$IMAGE"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" = linux/amd64
           version="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$image")"
           image_tag="${image##*:}"
           if [[ "${image_tag%-r*}" != "$version" ]]; then
@@ -75,21 +88,19 @@ jobs:
         if: failure()
         run: docker compose logs --no-color --tail 100
       - name: Export the tested image
-        if: github.event_name == 'push'
+        if: github.ref_type == 'tag'
         shell: bash
         env:
-          ARCHITECTURE: ${{ matrix.arch }}
+          IMAGE: ${{ steps.compose.outputs.image }}
         run: |
-          image="$(docker compose config --images)"
-          archive_tag="hyperion-release:$ARCHITECTURE"
-          docker image tag "$image" "$archive_tag"
-          docker image save "$archive_tag" | gzip -1 > "hyperion-$ARCHITECTURE.tar.gz"
+          docker image tag "$IMAGE" hyperion-release:amd64
+          docker image save hyperion-release:amd64 | gzip -1 > hyperion-amd64.tar.gz
       - name: Upload the tested image
-        if: github.event_name == 'push'
+        if: github.ref_type == 'tag'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: hyperion-image-${{ matrix.arch }}
-          path: hyperion-${{ matrix.arch }}.tar.gz
+          name: hyperion-image-amd64
+          path: hyperion-amd64.tar.gz
           if-no-files-found: error
           compression-level: 0
           overwrite: true
@@ -97,7 +108,7 @@ jobs:
 
   publish:
     name: Publish the release to GHCR
-    if: github.event_name == 'push' && github.repository == 'pjamroziak/hyperion-docker'
+    if: github.ref_type == 'tag' && github.repository == 'pjamroziak/hyperion-docker'
     needs: smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -113,14 +124,13 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: hyperion-image-*
+          name: hyperion-image-amd64
           path: release-images
-          merge-multiple: true
       - name: Sign in to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-      - name: Publish the multi-platform image
+      - name: Publish the AMD64 image
         run: |
           image="ghcr.io/pjamroziak/hyperion-docker:${GITHUB_REF_NAME#v}"
-          bash .github/scripts/publish-image.sh "$image" release-images "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          bash .github/scripts/publish-image.sh "$image" release-images/hyperion-amd64.tar.gz "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"

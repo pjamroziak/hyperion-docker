@@ -1,28 +1,33 @@
-FROM debian:bookworm-slim
+# syntax=docker/dockerfile:1
 
+ARG HYPERION_VERSION=2.2.1
+
+FROM scratch AS hyperion-package
+ARG HYPERION_VERSION
+ADD --checksum=sha256:8e30585049421297455387564f8df2c87603f0f8557bc95abca102be27e872b9 --chmod=0644 \
+    https://github.com/hyperion-project/hyperion.ng/releases/download/${HYPERION_VERSION}/Hyperion-${HYPERION_VERSION}-Linux-amd64.deb /hyperion.deb
+
+FROM debian:bookworm-slim AS runtime
+
+ARG HYPERION_VERSION
 ARG TARGETARCH
 
 LABEL org.opencontainers.image.title="Hyperion" \
-      org.opencontainers.image.version="2.2.1" \
+      org.opencontainers.image.version="${HYPERION_VERSION}" \
       org.opencontainers.image.source="https://github.com/pjamroziak/hyperion-docker"
 
-RUN set -eu; \
-    case "$TARGETARCH" in \
-        amd64) checksum=8e30585049421297455387564f8df2c87603f0f8557bc95abca102be27e872b9 ;; \
-        arm64) checksum=ee5e9eaeeb4a6bc69174b15dcb316de274cc77dab93fc5c370905e04ca2f056b ;; \
-        *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
-    esac; \
+RUN --mount=type=bind,from=hyperion-package,source=/hyperion.deb,target=/tmp/hyperion.deb \
+    set -eu; \
+    if [ "$TARGETARCH" != amd64 ]; then \
+        echo "This image supports only linux/amd64." >&2; \
+        exit 1; \
+    fi; \
     apt-get update -o APT::Update::Error-Mode=any; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl libdbus-1-3 libegl1 libfontconfig1 libgl1 \
         libglib2.0-0 libxkbcommon0 tzdata util-linux; \
-    curl --fail --silent --show-error --location --retry 3 \
-        "https://github.com/hyperion-project/hyperion.ng/releases/download/2.2.1/Hyperion-2.2.1-Linux-${TARGETARCH}.deb" \
-        --output /tmp/hyperion.deb; \
-    printf '%s  /tmp/hyperion.deb\n' "$checksum" | sha256sum --check --strict; \
     DEBIAN_FRONTEND=noninteractive XDG_CURRENT_DESKTOP=container-build \
         apt-get install -y --no-install-recommends /tmp/hyperion.deb; \
-    rm /tmp/hyperion.deb; \
     rm -rf /var/lib/apt/lists/*; \
     if ! hyperiond --service --version; then \
         ldd "$(readlink -f "$(command -v hyperiond)")" >&2; \

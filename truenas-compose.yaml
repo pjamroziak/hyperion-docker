@@ -1,6 +1,7 @@
 services:
   hyperion:
     image: ghcr.io/pjamroziak/hyperion-docker:2.2.1-r1
+    platform: linux/amd64
     init: true
     restart: unless-stopped
     stop_grace_period: 30s

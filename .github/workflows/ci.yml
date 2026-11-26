@@ -23,6 +23,8 @@ jobs:
       COMPOSE_FILE: truenas-compose.yaml
       COMPOSE_PROJECT_NAME: hyperion-smoke
       HYPERION_CONFIG_DIR: /tmp/hyperion-config
+      PUID: "12345"
+      PGID: "23456"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,13 +34,15 @@ jobs:
           docker compose config --quiet
           image="$(docker compose config --images)"
           docker build --tag "$image" .
-      - name: Check the web UI, startup logs and database
+      - name: Check the web UI, startup logs and database ownership
         run: |
-          sudo install -d -m 0750 -o 568 -g 568 "$HYPERION_CONFIG_DIR"
+          sudo install -d -m 0750 -o "$PUID" -g "$PGID" "$HYPERION_CONFIG_DIR"
           docker compose up --detach --pull never --wait --wait-timeout 90
           curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8090/
           docker compose logs --no-color hyperion | grep -F 'Starting Hyperion in non-GUI mode, DB is read/write'
-          docker compose exec -T hyperion test -s /config/db/hyperion.db
+          database="$HYPERION_CONFIG_DIR/db/hyperion.db"
+          sudo test -s "$database"
+          test "$(sudo stat -c '%u:%g' "$database")" = "$PUID:$PGID"
       - name: Show container logs on failure
         if: failure()
         run: docker compose logs --no-color --tail 100

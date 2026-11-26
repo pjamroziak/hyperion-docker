@@ -1,10 +1,10 @@
-# Hyperion na TrueNAS
+# Hyperion on TrueNAS
 
-Obraz uruchamia Hyperion 2.2.1 na Debianie Bookworm z pakietu z podpisanego repozytorium APT projektu. Proces działa jako `568:568`, zapisuje konfigurację w `/config` i wysyła logi konsolowe do Dockera. [Instrukcja instalacji Hyperiona na Linuksie](https://docs.hyperion-project.org/user/gettingstarted/Linux.html)
+This image runs Hyperion 2.2.1 on Debian Bookworm. The build verifies the upstream release package against its published SHA-256 checksum. At startup the entrypoint reads `PUID` and `PGID` and starts Hyperion under those IDs. Hyperion stores its database and user data in `/config` and writes console logs to Docker. [Hyperion release packages](https://github.com/hyperion-project/hyperion.ng/releases/tag/2.2.1)
 
-## Budowa i publikacja
+## Build and publish
 
-Na komputerze z Dockerem i architekturą zgodną z hostem docelowym wykonaj polecenia w katalogu repozytorium. Publikacja wymaga zalogowania się do rejestru z uprawnieniem zapisu do pakietu. [Dokumentacja GitHub Container Registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+Run these commands in the repository on a Docker host with the same architecture as the target NAS. Publishing requires write access to the package. [GitHub Container Registry documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
 ```sh
 docker build -t ghcr.io/pjamroziak/hyperion-docker:2.2.1 .
@@ -12,22 +12,34 @@ docker login ghcr.io -u pjamroziak
 docker push ghcr.io/pjamroziak/hyperion-docker:2.2.1
 ```
 
-Jeśli pakiet jest prywatny, TrueNAS potrzebuje uprawnień do jego pobrania. Możesz też zbudować obraz bezpośrednio na docelowym hoście albo przenieść go przez `docker save` i `docker load`. Compose może użyć lokalnego obrazu o tej samej nazwie i tagu.
+TrueNAS needs pull access if the package is private. You can also build the image on the target host or transfer it with `docker save` and `docker load`. Compose can use a local image with the same name and tag.
 
-## Instalacja na TrueNAS
+## Install on TrueNAS
 
-1. Na TrueNAS SCALE 24.10 lub nowszym utwórz dataset na konfigurację. W przykładzie jest to `/mnt/tank/apps/hyperion`. W uprawnieniach datasetu zapewnij UID/GID `568:568` odczyt, zapis i dostęp do katalogu. W przypadku migracji upewnij się, że istniejąca baza także jest zapisywalna.
-2. Otwórz **Apps → Discover Apps → ⋮ → Install via YAML**. Nadaj aplikacji nazwę `hyperion` i wklej zawartość `truenas-compose.yaml`. Jeśli Twój dataset ma inną ścieżkę, zmień `source:`. [Instrukcja instalacji własnej aplikacji](https://apps.truenas.com/managing-apps/installing-custom-apps/)
-3. Otwórz portal **Web UI** albo przejdź na `http://IP_TRUENAS:8090`. Pole `x-portals` podaje TrueNAS adres portalu. Jeżeli port hosta `8090` jest zajęty, zmień lewą stronę mapowania `8090:8090/tcp` i port portalu. Test HTTP nadal korzysta z portu wewnętrznego `8090`.
+1. On TrueNAS SCALE 24.10 or later, create a dataset for the configuration. The example uses `/mnt/tank/apps/hyperion`. Give the UID and GID configured below read, write and traverse access to the dataset and any existing Hyperion data.
+2. Open **Apps → Discover Apps → ⋮ → Install via YAML**. Name the app `hyperion` and paste `truenas-compose.yaml`. Set `source:` to the dataset path and edit `PUID` and `PGID` under `environment` to match its permissions. Both default to `568` and accept positive decimal IDs. [TrueNAS Custom Apps](https://apps.truenas.com/managing-apps/installing-custom-apps/)
+3. Open the **Web UI** portal or browse to `http://TRUENAS_IP:8090`. If a host port is already occupied, change the left-hand side of its mapping. For HTTP, also update the `x-portals` port. The health check uses the internal HTTP port `8090`.
 
-## Logi i status
+## Published ports
 
-- **TrueNAS → Apps → hyperion → Workloads → Logs** pokazuje start, ostrzeżenia i błędy kontenera. Poziom `Info` jest ustawiony domyślnie. Aby chwilowo włączyć `Debug`, dodaj `command: ["--debug"]` pod usługą `hyperion`, a po diagnostyce usuń ten wpis. [Logi w TrueNAS](https://apps.truenas.com/managing-apps/managing-installed-apps/), [Opcje Hyperiona](https://docs.hyperion-project.org/user/advanced/CLI.html)
-- Docker rotuje logi według limitu trzech segmentów po 10 MB na kontener. Odtworzenie kontenera rozpoczyna nową historię logów. Katalog `/config` zachowuje bazę ustawień i pozostałe dane użytkownika. [Sterownik logów `local`](https://docs.docker.com/engine/logging/drivers/local/)
-- Kontrola stanu odpytuje panel WWW wewnątrz kontenera. Po uruchomieniu sprawdź urządzenia i wejścia obrazu w **Hyperion → System → Log**. [Diagnostyka Hyperiona](https://docs.hyperion-project.org/user/advanced/Support.html)
+| Port | Protocol | Service |
+| --- | --- | --- |
+| 8090 | TCP | HTTP web UI, JSON-RPC over HTTP and WebSocket |
+| 8092 | TCP | HTTPS web UI, JSON-RPC over HTTPS and secure WebSocket |
+| 19333 | TCP | Boblight input, disabled by default in Hyperion |
+| 19400 | TCP | FlatBuffers image input |
+| 19444 | TCP | Raw JSON API |
+| 19445 | TCP | Protocol Buffers image input |
 
-## Urządzenia i sieć
+Use `network_mode: host` and remove `ports:` if you need LAN multicast discovery through mDNS (`5353/udp`) or SSDP (`1900/udp`). In host mode, Hyperion uses the NAS network directly. [Hyperion connection options](https://api.hyperion-project.org/connect-to-hyperion-1027155m0), [Default Hyperion settings](https://github.com/hyperion-project/hyperion.ng/blob/2.2.1/settings/hyperion.settings.json.default), [Docker host networking](https://docs.docker.com/engine/network/drivers/host/)
 
-- **WLED po IP** działa w konfiguracji `bridge`, jeśli NAS ma dostęp do sterownika. Wprowadź adres WLED w panelu Hyperiona. Jeśli zależy Ci na wykrywaniu przez mDNS, możesz wypróbować `network_mode: host`, usuwając `ports:`. Sprawdź wtedy dostępność portów Hyperiona bezpośrednio na NAS-ie. [Konfiguracja WLED](https://docs.hyperion-project.org/user/leddevices/network/wled.html), [Sieć hosta w Dockerze](https://docs.docker.com/engine/network/drivers/host/)
-- **Grabber USB lub sterownik szeregowy** wymaga przekazania właściwego urządzenia w `devices:`, np. `/dev/video0:/dev/video0` albo `/dev/ttyUSB0:/dev/ttyUSB0`. Dopisz w `group_add:` numeryczny GID grupy urządzenia z NAS-a. Jeżeli grabber ma stabilną ścieżkę w `/dev/v4l/by-id/`, użyj jej po stronie hosta.
-- **Zewnętrzne źródło obrazu lub klient API** może potrzebować dodatkowego portu. Dodaj mapowanie dla protokołu podanego przez klienta. Panel WWW i WebSocket współdzielą port `8090`, surowe API JSON domyślnie używa `19444/tcp`. [Protokoły i porty Hyperiona](https://api.hyperion-project.org/connect-to-hyperion-1027155m0)
+## Logs and status
+
+- Open **Apps → hyperion → Workloads → Logs** in TrueNAS to see startup messages, warnings and errors. The default level is `Info`. To enable `Debug` temporarily, add `command: ["--debug"]` under the `hyperion` service and remove it after troubleshooting. [TrueNAS container logs](https://apps.truenas.com/managing-apps/managing-installed-apps/), [Hyperion CLI options](https://docs.hyperion-project.org/user/advanced/CLI.html)
+- The Docker `local` driver rotates logs across three 10 MB segments per container. Recreating the container starts a new log history. The dataset mounted at `/config` keeps the database and user data. [Docker local logging driver](https://docs.docker.com/engine/logging/drivers/local/)
+- The health check probes the web UI over HTTP. For LED hardware and capture diagnostics, open **System → Log** in Hyperion. [Hyperion troubleshooting](https://docs.hyperion-project.org/user/advanced/Support.html)
+
+## Hardware
+
+- For WLED on a reachable LAN, enter the controller's IP address in Hyperion. [WLED configuration](https://docs.hyperion-project.org/user/leddevices/network/wled.html)
+- For a USB capture device or serial controller, add the relevant device under `devices`, for example `/dev/video0:/dev/video0` or `/dev/ttyUSB0:/dev/ttyUSB0`. Use `group_add` for the device's numeric group ID on the NAS. If the grabber has a stable `/dev/v4l/by-id/` path, use it on the host side of the mapping.
